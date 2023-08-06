@@ -16,10 +16,10 @@ jobs:
       - name: Checkout to source branch
         uses: actions/checkout@v3
 
-      - name: Setup Python 3.8
+      - name: Setup Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.11"
 
       - name: Install dependencies and prepare environment
         run: |
@@ -38,10 +38,10 @@ jobs:
       - name: Checkout to dev
         uses: actions/checkout@v3
 
-      - name: Setup Python 3.8
+      - name: Setup Python 3.11
         uses: actions/setup-python@v4
         with:
-          python-version: "3.8"
+          python-version: "3.11"
 
       - name: Prepare environment
         run: |

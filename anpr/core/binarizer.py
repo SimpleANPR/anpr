@@ -8,9 +8,11 @@ import numpy as np
 
 
 from . import ImageProcessor
+from .decorators import assert_single_channel
 
 
 class Binarizer(ImageProcessor):
+    @assert_single_channel
     @abstractmethod
     def binarize(self, image: np.ndarray) -> np.ndarray:
         """Recebe uma imagem em escala de cinza
