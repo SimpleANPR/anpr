@@ -6,7 +6,7 @@ from __future__ import annotations
 from abc import abstractmethod
 import numpy as np
 
-from . import ImageProcessor
+from .image_processor import ImageProcessor
 
 
 class Resizer(ImageProcessor):

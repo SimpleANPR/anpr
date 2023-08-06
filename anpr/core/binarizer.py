@@ -7,7 +7,7 @@ from abc import abstractmethod
 import numpy as np
 
 
-from . import ImageProcessor
+from .image_processor import ImageProcessor
 from .decorators import assert_single_channel
 
 
