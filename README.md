@@ -9,7 +9,7 @@ Esse repositório contém um projeto de reconhecimento automático de placas vei
 - **Algoritmos de Pré-Processamento**: 
   - *Redução de Ruído* (Non-Local Means, Filtros passa-baixa);
   - *Ajuste de Brilho e Contraste* (Equalização de Histograma, Mudança em Brilho, Mudança em Contraste); 
-  - *Interpolação* (Vizinho Mais Próxima, Bilinear, Bicúbica, Lanczos); =
+  - *Interpolação* (Vizinho Mais Próxima, Bilinear, Bicúbica, Lanczos);
   - *Conversão para Escala de Cinza*;
 - **Algoritmos de Segmentação/Detecção de Borda**: 
   - *Segmentação* (Watershed, K-Means, Baseados em Região);
