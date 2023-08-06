@@ -4,16 +4,13 @@ de um binarizador.
 from __future__ import annotations
 
 from abc import abstractmethod
+
 import numpy as np
 
-
 from .image_processor import ImageProcessor
-from .decorators import assert_single_channel
 
 
 class Binarizer(ImageProcessor):
-    @assert_single_channel
-    @abstractmethod
     def binarize(self, image: np.ndarray) -> np.ndarray:
         """Recebe uma imagem em escala de cinza
         e retorna uma imagem binarizada.
@@ -24,6 +21,11 @@ class Binarizer(ImageProcessor):
         Returns:
             np.ndarray: imagem binarizada.
         """
+        assert len(image.shape) == 2, "Imagem tem que ser single-channel"
+        return self._binarize(image)
+
+    @abstractmethod
+    def _binarize(self, image: np.ndarray) -> np.ndarray: ...
 
     def process(self, image: np.ndarray) -> np.ndarray:
         return self.binarize(image)
