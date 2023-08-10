@@ -168,3 +168,6 @@ cython_debug/
 # Non-code files
 *.txt
 *.pdf
+
+# Dataset directories
+img/
