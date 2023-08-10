@@ -2,7 +2,7 @@
 de benchmark utilizadas pelo OpenALPR.
 
 O dataset original pode ser encontrado em:
-https://github.com/openalpr/openalpr
+https://github.com/openalpr/benchmarks
 """
 from __future__ import annotations
 
