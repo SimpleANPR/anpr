@@ -7,17 +7,27 @@ https://github.com/openalpr/benchmarks
 from __future__ import annotations
 
 from dataclasses import dataclass
-import cv2
-
 from pathlib import Path
+
+import cv2
 import gdown
+import numpy as np
 
 
 @dataclass
 class OpenALPRImage:
+    """Classe que representa uma imagem
+    anotada do dataset OpenALPR.
+
+    name: nome da imagem
+    image: imagem como np array (RGB)
+    plate_position: retângulo da placa (lx, uy, w, h)
+    plate_text: conteúdo do texto
+    image_path: caminho para a imagem
+    """
     name: str
     image: np.ndarray
-    plate_polygon: tuple
+    plate_rect: tuple[int, int, int, int]
     plate_text: str
     image_path: Path
 
@@ -58,15 +68,12 @@ class OpenALPRDataset:
             parts = annotation.split()
             assert len(parts) == 6
 
-            # TODO: adicionar suporte para
-            #   conversão do formato (x, y, w, h)
-            plate_polygon = None
+            plate_position = tuple(map(int, parts[1:-1]))
             plate = parts[-1]
-            poly = tuple(map(float, parts[1:-1]))
             img_name = img_path.name
             self._imgs[img_name] = OpenALPRImage(name=img_name,
                                                  image=None,
-                                                 plate_polygon=plate_polygon,
+                                                 plate_rect=plate_position,
                                                  plate_text=plate,
                                                  image_path=img_path)
 
@@ -109,3 +116,8 @@ class OpenALPRDataset:
 
         # Apagando o zip após download e extraçaõ
         zip_path.unlink()
+
+    @classmethod
+    def _get_rect_vertices(cls, x, y, w, h) -> list[np.ndarray]:
+        base = np.array([x, y], dtype=np.int32)
+        return 
