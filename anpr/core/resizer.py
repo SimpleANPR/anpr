@@ -28,7 +28,7 @@ class Resizer(ImageProcessor):
         return self._res
 
     @abstractmethod
-    def resize(image: np.ndarray) -> np.ndarray:
+    def resize(self, image: np.ndarray) -> np.ndarray:
         """Redimensionada a imagem passada como argumento
         para a nova resolução.
 
