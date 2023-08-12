@@ -1,3 +1,6 @@
+"""Interpolação Bilinear.
+"""
+
 from __future__ import annotations
 
 import cv2
@@ -10,7 +13,6 @@ class Bilinear(Resizer):
         self._res = target_resolution
 
     def resize(self, image: np.ndarray) -> np.ndarray:
-        return cv2.resize(src=image, dsize=self._res, interpolation=cv2.INTER_LINEAR)
-
-    def process(self, image: np.ndarray) -> np.ndarray:
-        return self.resize(image)
+        return cv2.resize(src=image, 
+                          dsize=self._res, 
+                          interpolation=cv2.INTER_LINEAR)
