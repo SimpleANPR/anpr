@@ -1,5 +1,5 @@
-"""Filtragem através do filtro
-média.
+"""Mudança de RGB para Escala de 
+Cinza.
 """
 from __future__ import annotations
 
