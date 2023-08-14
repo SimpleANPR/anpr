@@ -10,11 +10,15 @@ from anpr.core import ImageProcessor
 
 
 class FilterBilateral(ImageProcessor):
-    def __init__(self, kernel_size: int):
+    def __init__(self, kernel_size: int,
+                 sigma_space: int,
+                 sigma_color: int):
         self._kernel = kernel_size
+        self._space = sigma_space
+        self._color = sigma_color
 
-    def process(self, image: np.ndarray, sigma_space: int, sigma_color: int) -> np.ndarray:
-        return cv2.bilateralFilter(src=image, 
-                                   d=self._kernel, 
-                                   sigmaColor=sigma_color, 
-                                   sigmaSpace=sigma_space)
+    def process(self, image: np.ndarray, ) -> np.ndarray:
+        return cv2.bilateralFilter(src=image,
+                                   d=self._kernel,
+                                   sigmaColor=self._color,
+                                   sigmaSpace=self._space)
