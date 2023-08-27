@@ -26,7 +26,7 @@ Referências:
 """
 from __future__ import annotations
 
-import math
+import logging
 from dataclasses import dataclass
 from typing import ClassVar
 
@@ -43,9 +43,14 @@ from anpr.core.feature_extractor import FeatureExtractor
 from anpr.core.image_processor import ImageProcessor
 from anpr.core.plate_detector import DetectionResult, PlateDetector
 from anpr.datasets.open_alpr import OpenALPRDataset
+from anpr.features.aggregator import AggregateExtractor
 from anpr.features.color import ColorFeatures
+from anpr.features.shape import ShapeFeatures
+from anpr.features.texture import TextureFeatures
 from anpr.generic.brightness import Brightness
 from anpr.generic.contrast import Contrast
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -64,11 +69,25 @@ class EstimatorDetector(PlateDetector):
         'random_forest': RandomForestClassifier
     }
 
+    _FEATURES: ClassVar[dict] = {
+        'color': ColorFeatures,
+        'texture': TextureFeatures,
+        'shape': ShapeFeatures,
+    }
+
     def __init__(self,
                  estimator_algorithm: str = 'logistic_regression',
                  estimator_params: dict = dict(),
-                 features: list[str] = ['color'],
+                 features: list[str] = ['color', 'texture', 'shape'],
                  scaler: str = 'MinMax',
+                 max_ch_prop=0.75,
+                 max_rect_ratio=0.4,
+                 min_rect_ratio=0.005,
+                 rect_overlap_th=0.6,
+                 max_neighbor_th=0.05,
+                 ch_dilate_size: int = 20,
+                 ch_dilate_iterations: int = 2,
+                 plate_rect_min_ratio: float = 0.7,
                  preprocessing: ImageProcessor = None,
                  pp_in_predict: bool = True,
                  train_n_variations_for_sample: int = 20,
@@ -101,12 +120,21 @@ class EstimatorDetector(PlateDetector):
         self._scaler = scaler
 
         # Instanciando extrator de características
-        self._extractor = ColorFeatures()
+        self._extractor = AggregateExtractor([self._FEATURES[f]()
+                                              for f in features])
 
         # Variáveis de controle
         self._preprocessing = preprocessing
         self._apply_predict = pp_in_predict
         self._n_variations = train_n_variations_for_sample
+        self._max_ch_prop = max_ch_prop
+        self._max_rect_ratio = max_rect_ratio
+        self._min_rect_ratio = min_rect_ratio
+        self._rect_overlap_th = rect_overlap_th
+        self._max_neighbor_th = max_neighbor_th
+        self._ch_dilate_size = ch_dilate_size
+        self._ch_dilate_iterations = ch_dilate_iterations
+        self._plate_rect_min_ratio = plate_rect_min_ratio
 
     def fit(self,
             indices: list[int],
@@ -145,55 +173,52 @@ class EstimatorDetector(PlateDetector):
 
         # Obtendo os retângulos
         rectangles = [cv2.boundingRect(c) for c in contours]
-        print(f'Encontrados {len(rectangles)} retângulos...')
+        logger.debug(f'Encontrados {len(rectangles)} retângulos...')
 
         # Filtrando retângulos "grandes"
-        max_ratio = 0.4
         rectangles = [r
                       for r in rectangles
-                      if (r[2] <= max_ratio * img_w)
-                      and (r[3] <= max_ratio * img_h)]
-        print(f'Restaram {len(rectangles)} retângulos após '
+                      if (r[2] <= self._max_rect_ratio * img_w)
+                      and (r[3] <= self._max_rect_ratio * img_h)]
+        logger.debug(f'Restaram {len(rectangles)} retângulos após '
               'remoção de retângulos grandes...')
 
         # Filtrando retângulos "pequenos"
-        min_ratio = 0.005
         rectangles = [r
                       for r in rectangles
-                      if (r[2] >= min_ratio * img_w)
-                      and (r[3] >= min_ratio * img_h)]
-        print(f'Restaram {len(rectangles)} retângulos após '
+                      if (r[2] >= self._min_rect_ratio * img_w)
+                      and (r[3] >= self._min_rect_ratio * img_h)]
+        logger.debug(f'Restaram {len(rectangles)} retângulos após '
               'remoção de retângulos pequenos...')
 
         # Removendo retângulos com proporção inviável para
         #   caractere
-        max_ch_prop = 0.75
         rectangles = [r
                       for r in rectangles
-                      if (r[2] / r[3] <= max_ch_prop)]
-        print(f'Restaram {len(rectangles)} retângulos após '
+                      if (r[2] / r[3] <= self._max_ch_prop)]
+        logger.debug(f'Restaram {len(rectangles)} retângulos após '
               'remoção de retângulos com proporção inviável...')
 
         # Removendo retângulos que possuem overlap
-        overlap_th: float = 0.6
-        to_remove = sorted(self._indices_to_remove_overlap(rectangles,
-                                                           overlap_th),
-                           reverse=True)
+
+        to_remove = sorted(self._indices_to_remove_overlap(
+            rectangles,
+            self._rect_overlap_th),
+            reverse=True)
         for idx in to_remove:
             del rectangles[idx]
 
-        print(f'Restaram {len(rectangles)} após remoção '
+        logger.debug(f'Restaram {len(rectangles)} após remoção '
               'de overlap...')
 
         # Removendo retângulos que não possuem vizinhos
         diagonal_size = self._euclidean_distance(np.array([0, 0]),
                                                  np.array([img_w, img_h]))
-        neighbor_th = 0.05
         rectangles = [r for i, r in enumerate(rectangles)
                       if self._has_neighbor(i,
                                             rectangles,
-                                            diagonal_size * neighbor_th)]
-        print(f'Restaram {len(rectangles)} retângulos após '
+                                            diagonal_size * self._max_neighbor_th)]
+        logger.debug(f'Restaram {len(rectangles)} retângulos após '
               'remoção dos sem vizinhos próximos...')
 
         # Buscando regiões com maior densidade de retângulos através
@@ -209,8 +234,9 @@ class EstimatorDetector(PlateDetector):
         # Dilatamos os retângulos para formar um retângulo maior
         blobs = cv2.dilate(blobs,
                            cv2.getStructuringElement(cv2.MORPH_RECT,
-                                                     (20, 20)),
-                           iterations=2)
+                                                     (self._ch_dilate_size,
+                                                      self._ch_dilate_size)),
+                           iterations=self._ch_dilate_iterations)
 
         # Obtemos os novos contornos
         blobs_contours, _ = cv2.findContours(blobs,
@@ -220,9 +246,9 @@ class EstimatorDetector(PlateDetector):
         # Calculamos os últimos candidatos
         candidates = [cv2.boundingRect(c) for c in blobs_contours]
         candidates = [c for c in candidates
-                      if c[2] / c[3] > 0.7]
+                      if c[2] / c[3] > self._plate_rect_min_ratio]
         n_candidates = len(candidates)
-        print('Quantidade de candidatos finais:', n_candidates)
+        logger.debug('Quantidade de candidatos finais:', n_candidates)
 
         if n_candidates <= 0:
             return DetectionResult(
@@ -489,7 +515,7 @@ class EstimatorDetector(PlateDetector):
                              others))
         others = sorted(zip(distances, others),
                         key=lambda t: t[0])
-        
+
         if len(others) <= 0:
             return True
 
