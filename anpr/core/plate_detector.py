@@ -23,6 +23,7 @@ class DetectionResult:
     n_candidates: int
     plate_polygon: tuple[int, int, int, int]
     plate_image: np.ndarray
+    extras: object | None = None
 
 
 class PlateDetector(ABC):
