@@ -28,34 +28,53 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from enum import Enum
+from typing import ClassVar
 
 import cv2
 import numpy as np
+import shapely
 import sklearn.preprocessing
-from sklearn.svm import SVC
+from sklearn.ensemble import ExtraTreesClassifier, RandomForestClassifier
+from sklearn.gaussian_process import GaussianProcessClassifier
+from sklearn.linear_model import LogisticRegression
+from sklearn.tree import DecisionTreeClassifier
 
-from anpr.core.image_processor import ImageProcessor
 from anpr.core.feature_extractor import FeatureExtractor
+from anpr.core.image_processor import ImageProcessor
 from anpr.core.plate_detector import DetectionResult, PlateDetector
 from anpr.datasets.open_alpr import OpenALPRDataset
 from anpr.features.color import ColorFeatures
+from anpr.generic.brightness import Brightness
+from anpr.generic.contrast import Contrast
 
 
 @dataclass(frozen=True)
 class DetectionExtras:
     candidates: list[tuple[int, int, int, int]]
+    candidates_probs: np.ndarray
     contours: tuple[np.ndarray]
 
 
 class EstimatorDetector(PlateDetector):
+    _CLF: ClassVar[dict] = {
+        'logistic_regression': LogisticRegression,
+        'gaussian_process': GaussianProcessClassifier,
+        'decision_tree': DecisionTreeClassifier,
+        'extra_trees': ExtraTreesClassifier,
+        'random_forest': RandomForestClassifier
+    }
+
     def __init__(self,
-                 estimator_algorithm: str = 'svm',
+                 estimator_algorithm: str = 'logistic_regression',
+                 estimator_params: dict = dict(),
                  features: list[str] = ['color'],
                  scaler: str = 'MinMax',
                  preprocessing: ImageProcessor = None,
-                 pp_in_predict: bool = False,
+                 pp_in_predict: bool = True,
+                 train_n_variations_for_sample: int = 20,
                  seed: int = None) -> None:
+        assert estimator_algorithm in self._CLF
+
         if seed is None:
             seed = np.random.randint(0, 99999)
 
@@ -69,15 +88,25 @@ class EstimatorDetector(PlateDetector):
             scaler_name = f'{scaler}Scaler'
             scaler = getattr(sklearn.preprocessing, scaler_name)()
 
-        self._estimator = SVC()
-        self._scaler = scaler
-        self._extractor = ColorFeatures()
+        # Armazenando a seed e criando um gerador
         self._seed = seed
+        self._rng = np.random.default_rng(self._seed)
 
+        # Gerando uma seed para o estimador
+        if 'random_state' not in estimator_params:
+            estimator_params['random_state'] = self._rng.integers(0, 99999)
+
+        # Instanciando estimador e scaler
+        self._estimator = self._CLF[estimator_algorithm](**estimator_params)
+        self._scaler = scaler
+
+        # Instanciando extrator de características
+        self._extractor = ColorFeatures()
+
+        # Variáveis de controle
         self._preprocessing = preprocessing
         self._apply_predict = pp_in_predict
-
-        self._rng = np.random.default_rng(self._seed)
+        self._n_variations = train_n_variations_for_sample
 
     def fit(self,
             indices: list[int],
@@ -103,93 +132,127 @@ class EstimatorDetector(PlateDetector):
         Returns:
             DetectionResult: resultado da detecção.
         """
-        # TODO: estratégias para melhoria de
-        # performance:
-        #  - Paralelismo
-        #  - Não calcular pixel a pixel (pular alguns e depois interpolar)
-        #    - Podemos pular alguns pixels;
-        #    - Podemos usar a classificação para a área completa;
-        #  - Não adicionar bordas pretas (ignorar pixels das bordas: NP)
-        #  - Reduzir tamanho da imagem (resize para tamanho menor mantendo proporções)
+        original_image = image
+
         if self._apply_predict:
             image = self._preprocessing.process(image)
 
-        # Criando array destino
-        if len(image.shape) == 3:
-            h, w, _ = image.shape
-        else:
-            h, w = image.shape
-        bin = np.zeros((h, w), dtype=np.uint8)
-
-        # Classificando regiões da imagem
-        step = self._window_size
-        offset = step // 2
-        for i in range(offset, h - offset, step):
-            for j in range(offset, w - offset, step):
-                # Obtendo slices da região da imagem
-                i_slice = slice(i-offset, i+offset)
-                j_slice = slice(j-offset, j+offset)
-
-                # Obtendo características da imagem
-                sub_img = image[i_slice, j_slice]
-                features = self._extractor.extract(sub_img)
-                features = np.expand_dims(features, axis=0)
-
-                # Passando pelo scaler se existir
-                if self._scaler is not None:
-                    features = self._scaler.transform(features)
-
-                # Obtendo a classe dessa região
-                cls = self._estimator.predict(features)
-
-                # Salvando na imagem binarizada
-                bin[i_slice, j_slice] = cls
-
-        # Extraindo contornos
-        contours, _ = cv2.findContours(bin,
-                                       cv2.RETR_EXTERNAL,
+        # Obtendo contornos externos
+        img_h, img_w = image.shape
+        contours, _ = cv2.findContours(image,
+                                       cv2.RETR_LIST,
                                        cv2.CHAIN_APPROX_SIMPLE)
 
-        # Aproximando polígonos
-        polygons = [cv2.approxPolyDP(c,
-                                     epsilon=self._dp_eps,
-                                     closed=True)
-                    for c in contours]
+        # Obtendo os retângulos
+        rectangles = [cv2.boundingRect(c) for c in contours]
+        print(f'Encontrados {len(rectangles)} retângulos...')
 
-        # Filtrando polígonos com quase 4 lados
-        polys_4_sided = [p for p in polygons
-                         if abs(len(p) - 4) <= 1]
+        # Filtrando retângulos "grandes"
+        max_ratio = 0.4
+        rectangles = [r
+                      for r in rectangles
+                      if (r[2] <= max_ratio * img_w)
+                      and (r[3] <= max_ratio * img_h)]
+        print(f'Restaram {len(rectangles)} retângulos após '
+              'remoção de retângulos grandes...')
 
-        if len(polys_4_sided) <= 0:
+        # Filtrando retângulos "pequenos"
+        min_ratio = 0.005
+        rectangles = [r
+                      for r in rectangles
+                      if (r[2] >= min_ratio * img_w)
+                      and (r[3] >= min_ratio * img_h)]
+        print(f'Restaram {len(rectangles)} retângulos após '
+              'remoção de retângulos pequenos...')
+
+        # Removendo retângulos com proporção inviável para
+        #   caractere
+        max_ch_prop = 0.75
+        rectangles = [r
+                      for r in rectangles
+                      if (r[2] / r[3] <= max_ch_prop)]
+        print(f'Restaram {len(rectangles)} retângulos após '
+              'remoção de retângulos com proporção inviável...')
+
+        # Removendo retângulos que possuem overlap
+        overlap_th: float = 0.6
+        to_remove = sorted(self._indices_to_remove_overlap(rectangles,
+                                                           overlap_th),
+                           reverse=True)
+        for idx in to_remove:
+            del rectangles[idx]
+
+        print(f'Restaram {len(rectangles)} após remoção '
+              'de overlap...')
+
+        # Removendo retângulos que não possuem vizinhos
+        diagonal_size = self._euclidean_distance(np.array([0, 0]),
+                                                 np.array([img_w, img_h]))
+        neighbor_th = 0.05
+        rectangles = [r for i, r in enumerate(rectangles)
+                      if self._has_neighbor(i,
+                                            rectangles,
+                                            diagonal_size * neighbor_th)]
+        print(f'Restaram {len(rectangles)} retângulos após '
+              'remoção dos sem vizinhos próximos...')
+
+        # Buscando regiões com maior densidade de retângulos através
+        #   da dilatação dos retângulos.
+        blobs = np.zeros((img_h, img_w),
+                         dtype=np.uint8)
+
+        # Colocamos os retângulos encontrados na cor branca
+        for r in rectangles:
+            x, y, w, h = r
+            blobs[y:y+h, x:x+w] = 1
+
+        # Dilatamos os retângulos para formar um retângulo maior
+        blobs = cv2.dilate(blobs,
+                           cv2.getStructuringElement(cv2.MORPH_RECT,
+                                                     (20, 20)),
+                           iterations=2)
+
+        # Obtemos os novos contornos
+        blobs_contours, _ = cv2.findContours(blobs,
+                                             cv2.RETR_EXTERNAL,
+                                             cv2.CHAIN_APPROX_SIMPLE)
+
+        # Calculamos os últimos candidatos
+        candidates = [cv2.boundingRect(c) for c in blobs_contours]
+        candidates = [c for c in candidates
+                      if c[2] / c[3] > 0.7]
+        n_candidates = len(candidates)
+        print('Quantidade de candidatos finais:', n_candidates)
+
+        if n_candidates <= 0:
             return DetectionResult(
                 found_plate=False,
                 n_candidates=0,
                 plate_polygon=None,
                 plate_image=None)
 
-        # Rankeando polígonos
-        if len(polys_4_sided) > 1:
-            ...
+        # Realizando classificação nas regiões candidatas
+        features = [self._extractor.extract(original_image[c[1]:c[1] + c[3],
+                                                           c[0]:c[0] + c[2]])
+                    for c in candidates]
+        predictions = self._estimator.predict_proba(features)
 
-        # Obtendo polígono mais provável
-        polygon = polys_4_sided[0]
-
-        # Extraindo bounding rect
-        bounding_rect = cv2.boundingRect(polygon)
-
-        # Extraindo sub-imagem
-        x, y, w, h = bounding_rect
-        plate = image[y:y+h, x:x+w].copy()
+        # Selecionamos o candidato que o classificador teve
+        #   maior confiança em ser uma região de placa.
+        best_candidate = predictions[:, 0].argmax()
+        plate_rect = candidates[best_candidate]
+        plate_img = original_image[plate_rect[1]:plate_rect[1] + plate_rect[3],
+                                   plate_rect[0]:plate_rect[0] + plate_rect[2]].copy()
 
         return DetectionResult(
             found_plate=True,
-            n_candidates=len(polys_4_sided),
-            plate_polygon=bounding_rect,
-            plate_image=plate,
+            n_candidates=n_candidates,
+            plate_polygon=plate_rect,
+            plate_image=plate_img,
             extras=DetectionExtras(
-                all_rectangles=[cv2.boundingRect(p)
-                                for p in polys_4_sided],
-                contours=contours))
+                candidates=candidates,
+                candidates_probs=predictions,
+                contours=blobs_contours))
 
     def _prepare_dataset(self,
                          indices: list[int],
@@ -211,11 +274,9 @@ class EstimatorDetector(PlateDetector):
         for idx in indices:
             # Obtendo imagem do dataset
             ds_img = ds.image_at(idx)
-            full_img = self._preprocessing.process(ds_img.image)
+            full_img = ds_img.image
 
             _, _, w, h = ds_img.plate_rect
-            if self._window_size > w or self._window_size > h:
-                continue
 
             # Obtendo exemplos positivos
             xs_p, ys_p = self._create_positives_from_plate(full_img,
@@ -223,9 +284,7 @@ class EstimatorDetector(PlateDetector):
 
             # Obtendo exemplos negativos
             xs_n, ys_n = self._create_n_negatives(full_img,
-                                                  ds_img.plate_rect,
-                                                  len(ys_p),
-                                                  self._rng.integers(0, 9999))
+                                                  ds_img.plate_rect)
             X.extend(xs_p + xs_n)
             y.extend(ys_p + ys_n)
 
@@ -236,50 +295,77 @@ class EstimatorDetector(PlateDetector):
                                      plate_info: tuple[int, int,
                                                        int, int]) -> tuple[list[np.ndarray],
                                                                            list[np.ndarray]]:
+        img_h, img_w, _ = image.shape
         x, y, w, h = plate_info
-        plate = image[y: y + h, x: x + w]
-
-        assert self._window_size <= h, h
-        assert self._window_size <= w, w
-
-        n_h = math.floor(h / self._window_size)
-        n_w = math.floor(w / self._window_size)
+        strategies = ['smaller', 'greater']
 
         # Inicializando com região completa da placa
-        X = []
+        X = [self._extractor.extract(image[y: y + h, x: x + w])]
 
-        # Criando amostras do tamanho da janela
-        for i in range(n_h):
-            for j in range(n_w):
-                # Obtendo região de placa
-                start_y = i * self._window_size
-                end_y = start_y + self._window_size
+        def _rand_slices(k_lower: float,
+                         k_upper: float,
+                         a_lower: float,
+                         a_upper: float) -> tuple[slice, slice]:
+            # Gerando um fator
+            k = self._rng.uniform(k_lower, k_upper)
 
-                start_x = j * self._window_size
-                end_x = start_x + self._window_size
+            # Gerando um offset
+            offset_y = self._rng.integers(a_lower, a_upper)
+            offset_x = self._rng.integers(a_lower, a_upper)
 
-                # Obtendo placa
-                plate_img = plate[start_y:end_y, start_x:end_x]
-                if plate_img.shape[:2] != (self._window_size,
-                                           self._window_size):
-                    continue
+            # Calculando novos tamanhos
+            new_w = max(int(w * k), 3)
+            new_h = max(int(h * k), 3)
 
-                # Calculando características dessa placa
-                features = self._extractor.extract(plate_img)
+            # Calculando limietes
+            start_y = max(y+offset_y, y)
+            end_y = min(start_y+new_h, img_h)
+            start_x = max(x+offset_x, x)
+            end_x = min(start_x+new_w, img_w)
 
-                # Salvando na array
-                X.append(features)
+            # Calculando slices
+            i = slice(start_y, end_y)
+            j = slice(start_x, end_x)
 
+            return i, j
+
+        def _rand_luminosity(img: np.ndarray) -> np.ndarray:
+            contrast = self._rng.uniform(0.75, 1.25)
+            brightness = self._rng.uniform(-5, 5)
+            brightness_updated = Brightness(brightness).process(img)
+            contrast_updated = Contrast(contrast).process(brightness_updated)
+            return contrast_updated
+
+        # Gerando exemplos da mesma placa
+        for _ in range(self._n_variations):
+            strategy = self._rng.choice(strategies)
+            i, j = None, None
+
+            # Obtendo slices aleatórios
+            if strategy == 'smaller':
+                i, j = _rand_slices(0, 1, -7, 7)
+            elif strategy == 'greater':
+                i, j = _rand_slices(1, 1.75, -7, 7)
+
+            # Obtendo imagem
+            img = image[i, j]
+
+            # Talvez aplicar uma mudança na luminosidade
+            if self._rng.random() > 0.75:
+                img = _rand_luminosity(img)
+
+            # Adicionando amostra
+            X.append(self._extractor.extract(img))
+
+        # Adicionando classes
         y = [1 for _ in range(len(X))]
+
         return X, y
 
     def _create_n_negatives(self,
                             image: np.ndarray,
-                            plate_info: tuple[int, int, int, int],
-                            n: int,
-                            seed: int) -> tuple[list[np.ndarray],
-                                                list[np.ndarray]]:
-        rng = np.random.default_rng(seed)
+                            plate_info: tuple[int, int, int, int]) -> tuple[list[np.ndarray],
+                                                                            list[np.ndarray]]:
         h, w, _ = image.shape
         px, py, pw, ph = plate_info
 
@@ -305,26 +391,7 @@ class EstimatorDetector(PlateDetector):
                                         plate_lower,
                                         plate_upper)
 
-            # Se algum dos limites da janela
-            #   fizer parte da placa ou estiver
-            #   fora da imagem, ela é inválida.
-            min_pos_w = pos - self._window_size
-            min_w_out_of_bounds = min_pos_w > img_max or min_pos_w < 0
-            min_w_inside_plate = _is_in_plate(min_pos_w,
-                                              plate_lower,
-                                              plate_upper)
-
-            max_pos_w = pos + self._window_size
-            max_w_out_of_bounds = min_pos_w > max_pos_w or max_pos_w < 0
-            max_w_inside_plate = _is_in_plate(max_pos_w,
-                                              plate_lower,
-                                              plate_upper)
-
-            any_out_bounds = out_of_bounds or min_w_out_of_bounds or \
-                max_w_out_of_bounds
-            any_inside = inside_plate or min_w_inside_plate or \
-                max_w_inside_plate
-            return not (any_out_bounds or any_inside)
+            return not (out_of_bounds or inside_plate)
 
         # Obtendo regiões aleatórias que não possuem
         #   parte da placa.
@@ -332,23 +399,22 @@ class EstimatorDetector(PlateDetector):
                     if _is_valid_idx(i, px, px + pw, w)]
         valid_ys = [i for i in range(h)
                     if _is_valid_idx(i, py, py + ph, h)]
-        n = min(n, min(len(valid_xs), len(valid_ys)))
 
-        xs = rng.choice(valid_xs,
-                        size=n,
-                        replace=False)
-        ys = rng.choice([i for i in range(h)
-                         if _is_valid_idx(i, py, py + ph, h)],
-                        size=n,
-                        replace=False)
+        # Obtendo os pontos para a quantidade de variações
+        xs = self._rng.choice(valid_xs,
+                              size=self._n_variations + 1,
+                              replace=False)
+        ys = self._rng.choice(valid_ys,
+                              size=self._n_variations + 1,
+                              replace=False)
         points = np.array(list(zip(ys, xs)),
                           dtype=np.int32)
 
         def _extract_feature(p: np.ndarray) -> np.ndarray:
-            w = self._window_size
-            lp = p - w
-            y, x = lp[0], lp[1]
-            sub_img = image[y:y+w, x:x+w]
+            y, x = p[0], p[1]
+            rand_w = self._rng.integers(4, pw + 4)
+            rand_h = self._rng.integers(4, ph + 4)
+            sub_img = image[y:y+rand_h, x:x+rand_w]
             return self._extractor.extract(sub_img)
 
         # Extraindo características
@@ -367,3 +433,66 @@ class EstimatorDetector(PlateDetector):
                 return image.ravel()
 
         return _Flatten()
+
+    def _indices_to_remove_overlap(self,
+                                   all_rectangles: list[tuple],
+                                   threshold: float) -> list[int]:
+        polygons = sorted([(i, shapely.box(xmin=x, xmax=x + w,
+                                           ymin=y, ymax=y + h))
+                           for i, (x, y, w, h) in enumerate(all_rectangles)],
+                          key=lambda e: e[1].area)
+        indices = []
+        for i, (idx, p) in enumerate(polygons):
+            for j, p_ in polygons[i+1:]:
+                if p.intersects(p_):
+                    int_area = shapely.intersection(p_, p).area
+                    min_area = p.area
+
+                    assert int_area >= 0.0
+                    assert min_area <= p_.area, f'{min_area} > {p_.area}'
+
+                    if int_area >= threshold * min_area:
+                        indices.append(idx)
+                        break
+
+        return indices
+
+    def _distance(self, rect_a, rect_b) -> float:
+        # Obtendo dados dos retângulos
+        xa, ya, wa, ha = rect_a
+        xb, yb, wb, hb = rect_b
+
+        # Calculamos o centro
+        ca = np.array([xa + wa // 2,
+                       ya + ha // 2])
+        cb = np.array([xb + wb // 2,
+                       yb + hb // 2])
+
+        # Calculando a normal do vetor distância
+        return self._euclidean_distance(ca, cb)
+
+    def _euclidean_distance(self,
+                            arr_a: np.ndarray,
+                            arr_b: np.ndarray) -> float:
+        return np.sqrt(np.sum((arr_a - arr_b) ** 2))
+
+    def _has_neighbor(self,
+                      idx: int,
+                      all_rectangles: list[tuple],
+                      proximity_th: float) -> bool:
+        # Obtendo retângulo
+        rect = all_rectangles[idx]
+
+        # Calculando distância dos demais retângulos
+        others = all_rectangles[:idx] + all_rectangles[idx+1:]
+        distances = list(map(lambda r: self._distance(rect, r),
+                             others))
+        others = sorted(zip(distances, others),
+                        key=lambda t: t[0])
+        
+        if len(others) <= 0:
+            return True
+
+        # Checando se possui vizinho
+        nearest_dist = others[0][0]
+        return nearest_dist <= proximity_th
