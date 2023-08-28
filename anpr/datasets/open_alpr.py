@@ -68,7 +68,8 @@ class OpenALPRDataset:
             parts = annotation.split()
             assert len(parts) == 6
 
-            plate_position = tuple(map(int, parts[1:-1]))
+            plate_position = tuple(map(lambda p: max(int(p), 0),
+                                       parts[1:-1]))
             plate = parts[-1]
             img_name = img_path.name
             self._imgs[img_name] = OpenALPRImage(name=img_name,
@@ -116,8 +117,3 @@ class OpenALPRDataset:
 
         # Apagando o zip após download e extraçaõ
         zip_path.unlink()
-
-    @classmethod
-    def _get_rect_vertices(cls, x, y, w, h) -> list[np.ndarray]:
-        base = np.array([x, y], dtype=np.int32)
-        return 

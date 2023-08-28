@@ -11,8 +11,8 @@ from anpr.core.ocr import OCR
 
 
 class EasyOCR(OCR):
-    def __init__(self) -> None:
-        self._reader = easyocr.Reader(['pt', 'en'],
+    def __init__(self, language: str = 'pt') -> None:
+        self._reader = easyocr.Reader([language],
                                       detector=False)
 
         upper_cases = list(string.ascii_uppercase)
