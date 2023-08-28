@@ -1,23 +1,6 @@
 """Esse módulo contém um detector de
 placas baseado em classificação e
-segmentação (ROI).
-
-Dada uma imagem f(x,y) de tamanho MxN,
-o objetivo é que, usando um classificador C
-todos os pontos (xi, yi) são atribuídos
-a uma das 2 classes região de Placa (RP)
-e região de Não Placa (NP). As características
-utilizadas são relativas às informações globais
-de uma dada região da imagem.
-
-Em outras palavras, produzimos uma nova imagem
-g(x, y) binária, onde 1 indica regiões que
-podem pertencer a uma placa e 0 indica
-regiões que podem não pertencer a placas.
-
-A partir da imagem g(x,y), aplicamos um algoritmo
-para identificação de retângulos e selecionamos
-uma ou mais regiões candidatas.
+segmentação.
 
 Referências:
 1. Color Texture-Based Object Detection: An Application to License Plate Localization
