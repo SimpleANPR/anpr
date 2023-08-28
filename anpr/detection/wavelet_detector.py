@@ -107,12 +107,25 @@ class WaveletDetector(PlateDetector):
 
         n_candidates = len(license_plate_list)
         found_plate = n_candidates > 0
-
+        best_candidate_index = self._best_candidate(polygon_list) if found_plate else None
+        
         return DetectionResult(
             found_plate=found_plate,
             n_candidates=n_candidates,
-            plate_polygon=polygon_list[0] if found_plate else None,
-            plate_image=license_plate_list[0] if found_plate else None,
+            plate_polygon=polygon_list[best_candidate_index] if found_plate else None,
+            plate_image=license_plate_list[best_candidate_index] if found_plate else None,
             extras=DetectionExtras(
                 candidates=polygon_list,
                 candidates_img=license_plate_list))
+    
+    def _best_candidate(self, candidates: list[tuple]):
+        top_candidate = 0
+        candidate_area = 0
+        i = 0 
+        for c in candidates:
+            if(c[2]*c[3] > candidate_area):
+                top_candidate = i
+                candidate_area = c[2] * c[3]
+            i = i + 1
+        
+        return top_candidate
