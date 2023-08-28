@@ -52,6 +52,16 @@ class WaveletDetector(PlateDetector):
         LL, (LH, HL, _) = WaveletTransform().process(image)
 
         # horizontal = self._binarizer.binarize(LH)
+
+        # HL pode ser float, nem todos algoritmos
+        #   de binarização suportam. A versão original
+        #   usava um SimpleBinarizer então valores negativos
+        #   se tornavam 0. Por garantia, vamos fazer a mesma
+        #   coisa aqui.
+        if HL.dtype in (np.float32, np.float64):
+            HL[HL < 0] = 0
+            HL = HL.astype(np.uint8)
+
         vertical = self._binarizer.binarize(HL)
 
         # soma dos números de pixels em cada linha
@@ -87,7 +97,7 @@ class WaveletDetector(PlateDetector):
 
                 # Aplicando um "trick" para retornar às coordenadas
                 #   originais através do up-sample.
-                # Mains informações em: 
+                # Mais informações em:
                 # https://www.mathworks.com/help/wavelet/ug/fast-wavelet-transform-fwt-algorithm.html
                 x, y, w, h = 2*x, 2*y, 2*w, 2*h
                 license_plate_list.append(original_image[y:(y+h), x:(x+w)])

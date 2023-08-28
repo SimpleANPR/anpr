@@ -200,7 +200,6 @@ class EstimatorDetector(PlateDetector):
               'remoção de retângulos com proporção inviável...')
 
         # Removendo retângulos que possuem overlap
-
         to_remove = sorted(self._indices_to_remove_overlap(
             rectangles,
             self._rect_overlap_th),
