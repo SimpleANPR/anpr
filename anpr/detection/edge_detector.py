@@ -6,11 +6,11 @@ import cv2
 import numpy as np
 
 from anpr.core.binarizer import Binarizer
-from anpr.core.plate_detector import DetectionResult, PlateDetector
-from anpr.generic.grayscale import GrayScale
-from anpr.generic.filter_bilateral import FilterBilateral
-from anpr.generic.canny import Canny
 from anpr.core.image_processor import ImageProcessor
+from anpr.core.plate_detector import DetectionResult, PlateDetector
+from anpr.generic.canny import Canny
+from anpr.generic.filter_bilateral import FilterBilateral
+from anpr.generic.grayscale import GrayScale
 
 
 @dataclass(frozen=True)

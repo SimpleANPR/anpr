@@ -8,9 +8,10 @@ import numpy as np
 from anpr.core import ImageProcessor
 
 
-
 class Canny(ImageProcessor):
-    def __init__(self, th1: float, th2: float):
+    def __init__(self,
+                 th1: float = 30,
+                 th2: float = 200):
         """Construtor. Recebe como argumento o tamanho
         N do Kernel NxN que deve ser utilizado.
 
