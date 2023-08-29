@@ -13,13 +13,21 @@
 
 ## Abordagens
 
+![Bordas](.github/img/example-edge.png)
+
 * Abordagem baseada em Bordas
   * **Filtro passa-baixa**: Bilateral, Média, Mediana, Gaussiano.
   * **Filtro passa-alta**: Canny, Laplaciano, Sobel, Prewitt e DoG.
   * Estratégia para seleção e detecção de placa.
+
+![Textura](.github/img/example-wavelet.png)
+
 * Abordagem baseada em Textura
   * **Transformada de Wavelet**
   * Estratégia para seleção e detecção de placa.
+
+![Bordas](.github/img/example-classifier.png)
+
 * Abordagem Baseada em Classificadores
   * **Redução de Ruídos**: Non-Local Means + Filtro passa-baixa.
   * **Dupla Binarização**: Otsu + Adaptative Mean.
