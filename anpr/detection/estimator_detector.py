@@ -28,6 +28,7 @@ from anpr.core.plate_detector import DetectionResult, PlateDetector
 from anpr.datasets.open_alpr import OpenALPRDataset
 from anpr.features.aggregator import AggregateExtractor
 from anpr.features.color import ColorFeatures
+from anpr.features.safe_nan import SafeNanExtractor
 from anpr.features.shape import ShapeFeatures
 from anpr.features.texture import TextureFeatures
 from anpr.generic.brightness import Brightness
@@ -41,6 +42,7 @@ class DetectionExtras:
     candidates: list[tuple[int, int, int, int]]
     candidates_probs: np.ndarray
     contours: tuple[np.ndarray]
+    final_blob: np.ndarray
 
 
 class EstimatorDetector(PlateDetector):
@@ -105,6 +107,7 @@ class EstimatorDetector(PlateDetector):
         # Instanciando extrator de características
         self._extractor = AggregateExtractor([self._FEATURES[f]()
                                               for f in features])
+        self._extractor = SafeNanExtractor(self._extractor)
 
         # Variáveis de controle
         self._preprocessing = preprocessing
@@ -260,7 +263,8 @@ class EstimatorDetector(PlateDetector):
             extras=DetectionExtras(
                 candidates=candidates,
                 candidates_probs=predictions,
-                contours=blobs_contours))
+                contours=blobs_contours,
+                final_blob=blobs))
 
     def _prepare_dataset(self,
                          indices: list[int],
